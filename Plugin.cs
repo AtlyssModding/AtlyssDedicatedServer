@@ -1,23 +1,27 @@
 ﻿using BepInEx;
 using BepInEx.Logging;
-using System.Linq;
-using System;
-using UnityEngine;
-using Steamworks;
-using Mirror;
 using HarmonyLib;
-using System.Reflection;
-using System.Text.RegularExpressions;
+using Mirror;
+using Steamworks;
+using System;
 using System.Collections;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using System.Reflection;
+using System.Reflection.Emit;
+using System.Text;
+using System.Text.RegularExpressions;
+using UnityEngine;
 
 namespace AtlyssDedicatedServer;
 
-// TODO : Fix console not echoing back.
-// clean console output
+// TODO : Refactor code into multiple scripts for easier maintainability
+// Gonna push the update for now.
 
-[BepInPlugin(PluginInfo.PLUGIN_GUID, PluginInfo.PLUGIN_NAME, PluginInfo.PLUGIN_VERSION)]
+[BepInPlugin(MyPluginInfo.PLUGIN_GUID, MyPluginInfo.PLUGIN_NAME, MyPluginInfo.PLUGIN_VERSION)]
 [BepInProcess("ATLYSS.exe")]
-public class Plugin : BaseUnityPlugin
+public class Plugin : BaseUnityPlugin, ILogListener
 {
     public enum LobbyTypeTag : byte
     {
@@ -43,6 +47,13 @@ public class Plugin : BaseUnityPlugin
 
     internal static new ManualLogSource Logger;
 
+    private ILogListener _bepinexConsoleListener;
+    private static TextWriter _rawConsoleOut;
+
+    internal static string lastServerMessage = string.Empty;
+    internal static DateTime lastServerMessageTime;
+    public static bool isProcessingConsoleCommand = false;
+
     private string GetArgValue(string[] args, string key)
     {
         int index = Array.IndexOf(args, key);
@@ -65,12 +76,61 @@ public class Plugin : BaseUnityPlugin
     {
         // Plugin startup logic
         Logger = base.Logger;
-        Logger.LogInfo($"Plugin {PluginInfo.PLUGIN_GUID} is loaded!");
+        Logger.LogInfo($"Plugin {MyPluginInfo.PLUGIN_GUID} is loaded!");
 
         if (!Application.isBatchMode)
         {
             Logger.LogWarning("Not running in batchmode, DedicatedServer plugin exiting.");
             return;
+        }
+
+        Console.CursorVisible = true;
+
+        try
+        {
+            Type consoleManagerType = Type.GetType("BepInEx.ConsoleManager, BepInEx");
+
+            if (consoleManagerType == null)
+            {
+                Logger.LogError("Failed to find BepInEx.ConsoleManager type.");
+                return;
+            }
+
+            PropertyInfo propInfo = consoleManagerType.GetProperty("StandardOutStream", BindingFlags.Public | BindingFlags.Static);
+
+            if (propInfo != null)
+            {
+                _rawConsoleOut = (TextWriter)propInfo.GetValue(null, null);
+            }
+
+            if (_rawConsoleOut == null)
+            {
+                Logger.LogError("Failed to get raw console output stream via reflection.");
+            }
+            else
+            {
+                try
+                {
+                    var listeners = (List<ILogListener>)typeof(BepInEx.Logging.Logger).GetProperty("Listeners", BindingFlags.Static | BindingFlags.Public).GetValue(null);
+                    _bepinexConsoleListener = listeners.FirstOrDefault(l => l.GetType().Name == "ConsoleLogListener");
+
+                    if (_bepinexConsoleListener != null)
+                    {
+                        BepInEx.Logging.Logger.Listeners.Remove(_bepinexConsoleListener);
+                        Logger.LogInfo("Successfully detached default BepInEx console listener.");
+                    }
+
+                    BepInEx.Logging.Logger.Listeners.Add(this);
+                }
+                catch (Exception ex)
+                {
+                    Logger.LogError($"An error occurred while detaching listener: {ex}");
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError($"An error occurred while accessing the console stream: {ex}");
         }
 
         string[] args = Environment.GetCommandLineArgs();
@@ -286,7 +346,20 @@ public class Plugin : BaseUnityPlugin
     {
         static void Postfix(string _message)
         {
+            if (Plugin.isProcessingConsoleCommand)
+            {
+                Plugin.isProcessingConsoleCommand = false;
+                return;
+            }
+
             string cleanMessage = StripUnityRichText(_message);
+
+            if (cleanMessage == Plugin.lastServerMessage &&
+                (DateTime.UtcNow - Plugin.lastServerMessageTime).TotalMilliseconds < 100)
+            {
+                return;
+            }
+
             Console.WriteLine($"[Chat] {cleanMessage}");
         }
 
@@ -295,6 +368,156 @@ public class Plugin : BaseUnityPlugin
             return Regex.Replace(input, "<.*?>", string.Empty);
         }
     }
+
+    [HarmonyPatch(typeof(HostConsole), "New_LogMessage")]
+    class HostConsoleFixPatch
+    {
+        static bool Prefix(string _message)
+        {
+            string text = $"[{DateTime.Now.Hour}:{DateTime.Now.Minute}] " + _message; // buggy newline normaly here in game code
+
+            // Cache
+            lastServerMessage = _message;
+            lastServerMessageTime = DateTime.UtcNow;
+
+            Console.ForegroundColor = ConsoleColor.Yellow;
+            Console.WriteLine("{0}", text);
+            Console.ResetColor();
+
+            // ignore ui and ingame console.
+            return false;
+        }
+    }
+
+    [HarmonyPatch(typeof(AtlyssNetworkManager), "Console_GetInput")]
+    class ConsolePatch
+    {
+        private static readonly StringBuilder inputBuffer = new StringBuilder();
+        internal static readonly object consoleLock = new object();
+
+        static bool Prefix()
+        {
+            if (!Console.KeyAvailable)
+            {
+                return false;
+            }
+
+            ConsoleKeyInfo key = Console.ReadKey(intercept: true);
+            lock (consoleLock)
+            {
+                switch (key.Key)
+                {
+                    case ConsoleKey.Enter:
+                        string command = inputBuffer.ToString();
+                        inputBuffer.Clear();
+
+                        _rawConsoleOut.WriteLine();
+
+                        isProcessingConsoleCommand = true;
+                        HostConsole._current.Send_ServerMessage(command);
+
+                        RedrawInput();
+                        break;
+
+                    case ConsoleKey.Backspace:
+                        if (inputBuffer.Length > 0)
+                        {
+                            inputBuffer.Length--;
+                            RedrawInput();
+                        }
+                        break;
+
+                    default:
+                        if (!char.IsControl(key.KeyChar))
+                        {
+                            inputBuffer.Append(key.KeyChar);
+                            _rawConsoleOut.Write(key.KeyChar);
+                        }
+                        break;
+                }
+            }
+            return false;
+        }
+
+        internal static void RedrawInput()
+        {
+            string prompt = "> ";
+            string line = prompt + inputBuffer.ToString();
+
+            ClearInputLine();
+            _rawConsoleOut.Write(line);
+        }
+
+        internal static void ClearInputLine()
+        {
+            int width = Console.WindowWidth;
+            _rawConsoleOut.Write($"\r{new string(' ', width - 1)}\r");
+        }
+    }
+
+    // Called for every new log event.
+    public void LogEvent(object sender, LogEventArgs e)
+    {
+        if (e.Source.SourceName == "INPUT") return;
+
+        lock (ConsolePatch.consoleLock)
+        {
+            ConsolePatch.ClearInputLine();
+
+            string formattedMessage = $"[{e.Level,-7}:{e.Source.SourceName}] {e.Data}";
+            _rawConsoleOut.WriteLine(formattedMessage);
+
+            ConsolePatch.RedrawInput();
+        }
+    }
+
+    // needed for ILogListener
+    public void Dispose()
+    {
+        BepInEx.Logging.Logger.Listeners.Remove(this);
+        BepInEx.Logging.Logger.Listeners.Add(_bepinexConsoleListener);
+    }
+
+    [HarmonyPatch(typeof(HostConsole), "Send_ServerMessage")]
+    class ChatManagerPatch
+    {
+        static bool Prefix(ref string _message)
+        {
+            if (!string.IsNullOrWhiteSpace(_message))
+            {
+                // mimic internal behavior
+                var inst = UnityEngine.Object.FindObjectOfType<HostConsole>();
+                var cmdManagerField = AccessTools.Field(typeof(HostConsole), "_cmdManager");
+                var cmdManager = cmdManagerField.GetValue(inst);
+
+                string[] array = _message.Split(' ');
+
+                if (_message.Contains('<') || _message.Contains('>'))
+                {
+                    Logger.LogInfo("'<' and '>' are not allowed in server messages.");
+                    return false;
+                }
+
+                if (_message[0] == '/')
+                {
+                    AccessTools.Method(cmdManager.GetType(), "Init_ConsoleCommand")
+                        ?.Invoke(cmdManager, new object[] {
+                        array[0].TrimStart('/'),
+                        array.Length > 1 ? array[1] : string.Empty
+                        });
+                }
+                else
+                {
+                    AccessTools.Method(typeof(HostConsole), "Init_ServerMessage", new Type[] { typeof(string) })
+                        ?.Invoke(inst, new object[] { _message });
+                }
+            }
+
+            // skip original
+            return false;
+        }
+    }
+
 
     // Mutes game audio
     [HarmonyPatch(typeof(SettingsManager), "Handle_AudioParameters")]

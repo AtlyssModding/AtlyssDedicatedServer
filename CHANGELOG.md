@@ -1,5 +1,12 @@
 ## 📜 Changelog
 
+### v0.0.6
+- Updated mod code to work with the new update of ATLYSS.
+- Cleaned up console output.
+
+### v0.0.5
+- Removed deprecated dependency from mod (thanks for the heads up Marioalexsan).
+
 ### v0.0.4
 - Updated mod code to work with the new update of ATLYSS.
 
