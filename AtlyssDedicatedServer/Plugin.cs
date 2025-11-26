@@ -19,7 +19,7 @@ namespace AtlyssDedicatedServer;
 // TODO : Refactor code into multiple scripts for easier maintainability
 // Gonna push the update for now.
 
-[BepInPlugin(MyPluginInfo.PLUGIN_GUID, MyPluginInfo.PLUGIN_NAME, MyPluginInfo.PLUGIN_VERSION)]
+[BepInPlugin(ModInfo.GUID, ModInfo.NAME, ModInfo.VERSION)]
 [BepInProcess("ATLYSS.exe")]
 public class Plugin : BaseUnityPlugin, ILogListener
 {
@@ -45,16 +45,16 @@ public class Plugin : BaseUnityPlugin, ILogListener
 
     private string playerName = string.Empty;
 
-    internal static new ManualLogSource Logger;
+    internal static new ManualLogSource Logger = null!;
 
-    private ILogListener _bepinexConsoleListener;
-    private static TextWriter _rawConsoleOut;
+    private ILogListener _bepinexConsoleListener = null!;
+    private static TextWriter _rawConsoleOut = null!;
 
     internal static string lastServerMessage = string.Empty;
     internal static DateTime lastServerMessageTime;
     public static bool isProcessingConsoleCommand = false;
 
-    private string GetArgValue(string[] args, string key)
+    private string? GetArgValue(string[] args, string key)
     {
         int index = Array.IndexOf(args, key);
         return (index >= 0 && index + 1 < args.Length) ? args[index + 1] : null;
@@ -76,7 +76,7 @@ public class Plugin : BaseUnityPlugin, ILogListener
     {
         // Plugin startup logic
         Logger = base.Logger;
-        Logger.LogInfo($"Plugin {MyPluginInfo.PLUGIN_GUID} is loaded!");
+        Logger.LogInfo($"Plugin {ModInfo.GUID} is loaded!");
 
         if (!Application.isBatchMode)
         {
@@ -88,20 +88,7 @@ public class Plugin : BaseUnityPlugin, ILogListener
 
         try
         {
-            Type consoleManagerType = Type.GetType("BepInEx.ConsoleManager, BepInEx");
-
-            if (consoleManagerType == null)
-            {
-                Logger.LogError("Failed to find BepInEx.ConsoleManager type.");
-                return;
-            }
-
-            PropertyInfo propInfo = consoleManagerType.GetProperty("StandardOutStream", BindingFlags.Public | BindingFlags.Static);
-
-            if (propInfo != null)
-            {
-                _rawConsoleOut = (TextWriter)propInfo.GetValue(null, null);
-            }
+            _rawConsoleOut = BepInEx.ConsoleManager.StandardOutStream;
 
             if (_rawConsoleOut == null)
             {
@@ -111,7 +98,7 @@ public class Plugin : BaseUnityPlugin, ILogListener
             {
                 try
                 {
-                    var listeners = (List<ILogListener>)typeof(BepInEx.Logging.Logger).GetProperty("Listeners", BindingFlags.Static | BindingFlags.Public).GetValue(null);
+                    var listeners = BepInEx.Logging.Logger.Listeners;
                     _bepinexConsoleListener = listeners.FirstOrDefault(l => l.GetType().Name == "ConsoleLogListener");
 
                     if (_bepinexConsoleListener != null)
@@ -264,7 +251,7 @@ public class Plugin : BaseUnityPlugin, ILogListener
 
         if (detected) return;
 
-        if (GameObject.FindObjectOfType<MainMenuManager>() != null)
+        if (MainMenuManager._current != null)
         {
             detected = true;
             HostServer();
@@ -486,10 +473,6 @@ public class Plugin : BaseUnityPlugin, ILogListener
             if (!string.IsNullOrWhiteSpace(_message))
             {
                 // mimic internal behavior
-                var inst = UnityEngine.Object.FindObjectOfType<HostConsole>();
-                var cmdManagerField = AccessTools.Field(typeof(HostConsole), "_cmdManager");
-                var cmdManager = cmdManagerField.GetValue(inst);
-
                 string[] array = _message.Split(' ');
 
                 if (_message.Contains('<') || _message.Contains('>'))
@@ -500,16 +483,11 @@ public class Plugin : BaseUnityPlugin, ILogListener
 
                 if (_message[0] == '/')
                 {
-                    AccessTools.Method(cmdManager.GetType(), "Init_ConsoleCommand")
-                        ?.Invoke(cmdManager, new object[] {
-                        array[0].TrimStart('/'),
-                        array.Length > 1 ? array[1] : string.Empty
-                        });
+                    HostConsole._current._cmdManager.Init_ConsoleCommand(array[0].TrimStart('/'), array.Length > 1 ? array[1] : string.Empty);
                 }
                 else
                 {
-                    AccessTools.Method(typeof(HostConsole), "Init_ServerMessage", new Type[] { typeof(string) })
-                        ?.Invoke(inst, new object[] { _message });
+                    HostConsole._current.Init_ServerMessage(_message);
                 }
             }
 
