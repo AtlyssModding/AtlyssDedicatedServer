@@ -1,8 +1,8 @@
 # 🖧 ATLYSS Dedicated Server Plugin
 
-**Now updated for the latest ATLYSS version.**
+[**Originally made by FleeTime.**](https://github.com/Flee-Time/AtlyssDedicatedServer)
 
-This BepInEx plugin adds **headless dedicated server support** to the game **ATLYSS**, enabling you to run the game in a terminal as a dedicated server — no graphics or UI needed.
+This BepInEx plugin adds **headless dedicated server support** to **ATLYSS**, enabling you to run the game in a terminal as a dedicated server — no graphics or UI needed.
 
 > ⚠️ This is for hosting servers only. It will disable itself when the game is being launched normally.
 
@@ -19,23 +19,17 @@ This BepInEx plugin adds **headless dedicated server support** to the game **ATL
 
 As long as the mod loads under BepInEx and applies during host/server initialization, it will work seamlessly with this dedicated server plugin.
 
----
+## 🔍 Known Issues
 
-## 🔍 Known Bugs
-
-- **Console input does not echo back while typing.**  
-  When using the BepInEx console, typed characters may not appear on screen. However, input is still being received and processed correctly — pressing `Enter` will submit the full command.
-
-- **No feedback for partially typed commands.**  
-  Since input isn't echoed, it's easy to lose track of what you've typed. To mitigate this, commands should be typed carefully and can be confirmed once submitted.
-
-
----
+- **Connecting to the dedicated server using the same Steam account is not possible.**  
+  - While you may be able to launch a new game instance in parallel with the dedicated server, 
+    it is not possible to connect to it using the same account as the one hosting the dedicated server.
+  - As such, it's best to host the dedicated server using a separate Steam account with a copy of ATLYSS on it.
 
 ## ✅ Requirements
 
 - **BepInEx 5.x**
-- **ATLYSS game**
+- **ATLYSS 112025.a4**
 - Must launch the game with the following arguments:
 
 ```sh
@@ -50,33 +44,39 @@ As long as the mod loads under BepInEx and applies during host/server initializa
 ATLYSS.exe -batchmode -nographics -server [options...]
 ```
 
-You **must** include `-batchmode -nographics` before your own custom arguments.
+You **must** include at least`-server` before your own custom arguments for the mod to activate.
+
+Specifying `-batchmode -nographics` is optional, but desirable to enable proper headless support.
+
+The mod also generates `start_dedicated_server.cmd` on Windows and `start_dedicated_server.sh` on Linux that do it for you, however you might need to have the Steam client active for it to work correctly.
 
 ---
 
 ## 🔧 Available Arguments
 
-| Argument             | Description                                                                 |
-|----------------------|-----------------------------------------------------------------------------|
-| `-server`            | Enables dedicated server mode                                               |
-| `-hostsave N`        | Selects the save slot to use for the host character (0–104)                 |
-| `-name "MyServer"`   | Sets the server name (max 20 characters)                                    |
-| `-password "1234"`   | Sets a join password                                                        |
-| `-motd "Message"`    | Sets a Message of the Day                                                   |
-| `-maxplayers N`      | Max number of players (between 2 and 250, default: 16)                      |
-| `-public`            | Makes server public (default if no type is given)                           |
-| `-private`           | Makes server private                                                        |
-| `-friends`           | Makes server visible only to Steam friends                                  |
-| `-pve`               | Lobby focus: PvE (default)                                                  |
-| `-pvp`               | Lobby focus: PvP                                                            |
-| `-social`            | Lobby focus: Social                                                         |
-| `-rp`                | Lobby focus: RP                                                             |
+| Argument                | Config Setting                        | Description                                                       | Values                                      | Default                     |
+|-------------------------|---------------------------------------|-------------------------------------------------------------------|---------------------------------------------|-----------------------------|
+| `-server`               |                                       | Enables dedicated server mode                                     |                                             |                             |
+| `-hostsave N`           | CharacterSlotToUse                    | Selects the save slot to use for the host character               | `int`, min 0, max 104                       | `0`                         |
+| `-name "MyServer"`      |                                       | Sets the server name (max 20 characters)                          | `string`, max 20                            | `ATLYSS Server`             |
+| `-password "1234"`      | ServerPassword                        | Sets a join password                                              | `string`                                    | <empty>                     |
+| `-motd "Message"`       | ServerMOTD                            | Sets a Message of the Day                                         | `string`                                    | `Welcome to ATLYSS Server!` |
+| `-maxplayers N`         | ServerMaxPlayers                      | Max number of players                                             | `int`, min 2, max 250                       | `16`                        |
+| `-public`               | ServerType (PUBLIC)                   | Makes server public                                               |                                             | default type                |
+| `-private`              | ServerType (PRIVATE)                  | Makes server private                                              |                                             |                             |
+| `-friends`              | ServerType (FRIENDS)                  | Makes server visible only to Steam friends                        |                                             |                             |
+| `-pve`                  | ServerTag (GAIA)                      | Lobby focus: PvE                                                  |                                             | default tag                 |
+| `-pvp`                  | ServerTag (DUALOS)                    | Lobby focus: PvP                                                  |                                             |                             |
+| `-social`               | ServerTag (NOTH)                      | Lobby focus: Social                                               |                                             |                             |
+| `-rp`                   | ServerTag (LOODIA)                    | Lobby focus: RP                                                   |                                             |                             |
+| `-autorestart`          | PeriodicRestartEnabled                | Enables automatic restarts                                        | `true/false`                                | `false`                     |
+| `-autorestartin`        | PeriodicRestartInterval               | Specifies time between restarts (like `1d` or `6h`)               | `string`, format like `1d12h30m`, min `30m` | `6h` (6 hours)              |
+| `-autorestartthreshold` | PeriodicRestartPlayerThresholdPercent | Specifies player count % below which the server will auto restart | `int`, min 0, max 100 (= % of max players)  | `100` (percent)             |
 
-
-> ⚠️ Only one of `-public`, `-private`, or `-friends` can be used.  
-> ⚠️ Only one of `-pve`, `-pvp`, or `-social` can be used.  
+> ⚠️ The priority of server type argument is `-public`, `-private`, then `-friends` in that order.  
+> ⚠️ The priority of server tag argument is  `-pve`, `-pvp`, `-social`, then `-rp` in that order.  
 > ⚠️ If `-hostsave` is not specified, the server will default to using **save slot 0**.  
-> You must have a valid character in the selected slot.
+> ⚠️ If there is no valid character in the given slot, a new random one will be created in it.
 
 ---
 
@@ -100,22 +100,27 @@ ATLYSS.exe -batchmode -nographics -server -name "Private Warzone" -password "hun
 ATLYSS.exe -batchmode -nographics -server -name "CozyHub" -motd "Grab tea and chill." -friends -social
 ```
 
+### Start a public PvE server with 64 players that restarts every 36 hours when the server is less than 25% full:
+
+```sh
+ATLYSS.exe -batchmode -nographics -server -name "Poontastic" -motd "Welcome!" -maxplayers 64 -public -pve -autorestart -autorestartin 36h -autorestartthreshold 25
+```
+
 ---
 
 ## 🧠 Behavior Notes
 
-- The host is teleported to **the fishing area 30 seconds** after spawning.
-- Server shuts down **5 seconds after host stop** (clean shutdown).
-- In-game chat is mirrored to the terminal (color tags handled).
-- Console input works for typing commands directly.
-- Audio is disabled via `AudioListener.volume = 0`.
-- Server config and startup logs are shown in the console.
+- The host player is fully hidden from view.
+- Console input works for typing commands directly
+- Server can be force restarted with `/restart`, and force shutdown with `/shutdown` in the console window
+- Server shutdowns and restarts (including the automatic restart) can be cancelled with `/cancelrt` or `/cancelsd` in the console window
+- In-game chat is mirrored to the terminal (color tags handled)
+- Audio is disabled via `AudioListener.volume = 0`
+- Server config and startup logs are shown in the console
 
 ---
 
 ## 🧪 Troubleshooting
 
-- ❌ **Server disappearing when trying to join?** Make sure you have a character saved in slot 0, or specify a `-hostsave` slot when starting.
 - ❌ **Nothing happens?** Make sure you're running with `-batchmode -nographics -server`
-- ❌ **Can't see the terminal?** Run the game via `cmd.exe` or a `.bat` script
-- ❌ **Server name reset?** Must be under 20 characters
+- ❌ **Can't see the terminal?** Check if console logging is enabled in `BepInEx/config/BepInEx.cfg`, or launch it through a CMD / bash shell
